@@ -13,7 +13,7 @@ interface SidebarState {
 }
 
 interface ChatMessage {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   thinking?: string;
   toolCalls?: ToolCallInfo[];
@@ -83,16 +83,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   refresh(): void { this.pushState(); }
 
   /** Switch to chat view for a new conversation */
-  enterChat(id: string, task: string): void {
+  enterChat(id: string, task: string, storedMessages?: ChatMessage[]): void {
     this.currentView = 'chat';
     this.currentChatId = id;
     this.currentChatTitle = task;
-    this.chatMessages = [
+    this.chatMessages = storedMessages || [
       { role: 'user', content: task },
       { role: 'assistant', content: '', isStreaming: true },
     ];
     this.pushState();
-    // Send existing messages to webview
+    // Send messages to webview
     this.view?.webview.postMessage({ type: 'setMessages', messages: this.chatMessages });
   }
 
@@ -145,6 +145,21 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     const last = this.chatMessages[this.chatMessages.length - 1];
     if (last) last.isStreaming = false;
     this.view?.webview.postMessage({ type: 'finalizeMessage' });
+  }
+
+  /** Save current chat messages to the conversation record in the store */
+  saveConversationMessages(conversationId: string): void {
+    const conv = this.store.get(conversationId);
+    if (!conv) return;
+    this.store.update(conversationId, {
+      messages: this.chatMessages.map(m => ({
+        role: m.role,
+        content: m.content,
+        toolCalls: m.toolCalls,
+        thinking: m.thinking,
+        isStreaming: m.isStreaming,
+      })),
+    });
   }
 
   addConversation(task: string, model: string): string {

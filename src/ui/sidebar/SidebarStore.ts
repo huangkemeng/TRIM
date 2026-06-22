@@ -1,7 +1,20 @@
 import * as vscode from 'vscode';
-import { ChatMessage } from '../../api/types';
 
 export type ConversationStatus = 'running' | 'completed' | 'stopped' | 'failed';
+
+export interface StoredToolCall {
+  name: string;
+  args: Record<string, unknown>;
+  result?: { success: boolean; data: string; error?: string };
+}
+
+export interface StoredMessage {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content: string;
+  thinking?: string;
+  toolCalls?: StoredToolCall[];
+  isStreaming?: boolean;
+}
 
 export interface ConversationRecord {
   id: string;
@@ -12,7 +25,7 @@ export interface ConversationRecord {
   tokensUsed: number;
   summary?: string;
   model?: string;
-  messages?: ChatMessage[];
+  messages?: StoredMessage[];
 }
 
 const STORAGE_KEY = 'trim.conversations';

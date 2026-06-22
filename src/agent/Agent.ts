@@ -177,6 +177,8 @@ export class Agent {
     let totalTokensUsed = 0;
     let budgetWarningGiven = false;
     let gracefulShutdownRequested = false;
+    let lastPlanUpdateIteration = 0;
+    let planReminderGiven = false;
     const MAX_EMPTY_RESPONSES = 3;
     const MAX_TEXT_ONLY_RESPONSES = 2;
     const BUDGET_WARNING_THRESHOLD = 0.7;
@@ -348,6 +350,15 @@ export class Agent {
               this.callbacks.onToolResult?.(toolName, result);
               toolResults.push(result);
               this.toolResults.push({ success: result.success, timestamp: Date.now() });
+
+              // Track plan updates
+              if (toolName === 'plan') {
+                const planAction = args.action as string;
+                if (planAction === 'update' || planAction === 'complete') {
+                  lastPlanUpdateIteration = iterations;
+                  planReminderGiven = false;
+                }
+              }
             } catch (error: any) {
               const errorResult: ToolResult = {
                 success: false,
@@ -388,6 +399,19 @@ export class Agent {
               this.callbacks.onError?.(msg);
               this.callbacks.onComplete?.(msg);
               return;
+            }
+          }
+
+          // --- Plan update reminder: if plan exists but hasn't been updated in 5+ iterations ---
+          if (this.planTool && !planReminderGiven && lastPlanUpdateIteration > 0) {
+            const planStatus = this.planTool.getStatus();
+            if (planStatus.total > 0 && iterations - lastPlanUpdateIteration >= 5) {
+              planReminderGiven = true;
+              this.context.addMessage({
+                role: 'system',
+                content: `[Reminder: You have not updated your plan in ${iterations - lastPlanUpdateIteration} iterations. Current progress: ${planStatus.completed.length}/${planStatus.total} steps completed. Please call plan with action="update" and completedStepIds to mark your progress.]`,
+                timestamp: Date.now(),
+              });
             }
           }
         } else {

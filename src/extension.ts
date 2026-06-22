@@ -93,14 +93,20 @@ async function startTask(task: string, sidebar: SidebarProvider, ctx: vscode.Ext
     onComplete: (summary: string) => {
       sidebar.finalizeMessage();
       outputChannel?.appendLine(`\n✅ TASK COMPLETE: ${summary}`);
-      if (currentConversationId) sidebar.updateConversation(currentConversationId, { status: 'completed', summary });
+      if (currentConversationId) {
+        sidebar.updateConversation(currentConversationId, { status: 'completed', summary });
+        sidebar.saveConversationMessages(currentConversationId);
+      }
       vscode.window.showInformationMessage('TRIM task completed!');
       isTaskRunning = false;
     },
     onError: (error: string) => {
       sidebar.finalizeMessage();
       outputChannel?.appendLine(`\n❌ Error: ${error}`);
-      if (currentConversationId) sidebar.updateConversation(currentConversationId, { status: 'failed', summary: error });
+      if (currentConversationId) {
+        sidebar.updateConversation(currentConversationId, { status: 'failed', summary: error });
+        sidebar.saveConversationMessages(currentConversationId);
+      }
       isTaskRunning = false;
     },
   });
@@ -137,16 +143,21 @@ export function activate(context: vscode.ExtensionContext) {
     if (sidebarProvider) await startTask(task, sidebarProvider, context);
   };
 
-  // Wire: click history item → show conversation summary in chat view
+  // Wire: click history item → restore full conversation
   sidebarProvider.onOpenConversation = (id: string) => {
     const conv = sidebarProvider?.getConversation(id);
     if (conv && sidebarProvider) {
-      sidebarProvider.enterChat(id, conv.task);
-      sidebarProvider.finalizeMessage();
-      // Show a summary message
-      const summary = conv.summary || 'No summary available.';
-      sidebarProvider.streamToken(`**Conversation resumed:** ${conv.title}\n\nStatus: ${conv.status}  •  Tokens: ${conv.tokensUsed}\n\n${summary}`);
-      sidebarProvider.finalizeMessage();
+      if (conv.messages && conv.messages.length > 0) {
+        // Restore full message history
+        sidebarProvider.enterChat(id, conv.task, conv.messages);
+      } else {
+        // Fallback: show summary
+        sidebarProvider.enterChat(id, conv.task);
+        sidebarProvider.finalizeMessage();
+        const summary = conv.summary || 'No summary available.';
+        sidebarProvider.streamToken(`**Conversation resumed:** ${conv.title}\n\nStatus: ${conv.status}  •  Tokens: ${conv.tokensUsed}\n\n${summary}`);
+        sidebarProvider.finalizeMessage();
+      }
     }
   };
 

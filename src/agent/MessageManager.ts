@@ -60,7 +60,13 @@ Before calling task_complete:
 - **When the task is complete, ALWAYS call task_complete with a summary of what was done.**
 - **If the user asks a simple question (not a coding task), answer concisely and call task_complete immediately after. Do NOT repeat yourself or answer multiple times.**
 - **If the user just says "hello", "hi", "你好" or similar greetings, respond with ONE brief sentence at most and call task_complete immediately. Do NOT list your capabilities, do NOT ask what they want, and do NOT repeat yourself.**
+- **After completing each plan step, ALWAYS call plan with action="update" and completedStepIds to mark progress. This is how the system tracks what has been done.**
 - **If you respond with text only and no tool calls, the system will assume you have completed the task. After a text-only response, call task_complete explicitly on the next turn — do NOT generate another text-only response.**
+
+## Strategic Tips
+- **For "find and fix errors" tasks**: Run the compiler/test command FIRST (e.g., "npx tsc --noEmit"), then read only the files that have errors. Do NOT explore the entire project before running the compiler.
+- **For "explore/summarize" tasks**: Read key files (package.json, main entry, configs) first, then explore specific areas of interest.
+- **Use glob to find files by pattern** (e.g., "**/*.ts") instead of manually listing directories one by one.
 
 ## Budget Awareness
 You have a limited number of iterations (maxIterations). Be strategic:
@@ -71,7 +77,11 @@ You have a limited number of iterations (maxIterations). Be strategic:
 ## Working Directory
 The workspace is at: ${workspaceRoot}
 
-Use absolute paths when working with files.`;
+## Environment
+- Platform: ${process.platform}
+- Shell: ${process.platform === 'win32' ? 'cmd.exe (use dir, type, cd /d for drive changes)' : '/bin/sh (use ls, cat, cd)'}
+
+Use absolute paths when working with files. On Windows, use backslash (\\) or forward slash (/) in paths.`;
   }
 
   /**

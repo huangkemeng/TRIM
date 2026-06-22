@@ -28,7 +28,10 @@ function isDestructiveCommand(command: string): boolean {
 export class BashTool implements ITool {
   definition: ToolDefinition = {
     name: 'bash',
-    description: 'Execute a terminal command and capture its output. Use this to run build commands, tests, scripts, or any shell operation.',
+    description: `Execute a terminal command and capture its output. Use this to run build commands, tests, scripts, or any shell operation.
+
+Platform: ${process.platform === 'win32' ? 'Windows (use cmd.exe compatible commands like dir, find, type)' : 'Unix/Linux (use bash commands like ls, find, cat)'}
+Tip: On Windows, use "dir /s /b <path>" to list files recursively. Use "type <file>" to read files. Use "cd /d <path>" to change drives.`,
     parameters: {
       command: {
         type: 'string',
@@ -82,6 +85,7 @@ export class BashTool implements ITool {
         maxBuffer: MAX_OUTPUT_LENGTH,
         encoding: 'utf-8',
         windowsHide: true,
+        shell: process.platform === 'win32' ? 'cmd.exe' : false,
       };
 
       if (cwd) {
