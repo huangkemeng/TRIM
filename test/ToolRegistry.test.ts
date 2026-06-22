@@ -7,6 +7,7 @@ import { TaskCompleteTool } from '../src/tools/TaskCompleteTool';
 import { GrepTool } from '../src/tools/GrepTool';
 import { GlobTool } from '../src/tools/GlobTool';
 import { ListDirTool } from '../src/tools/ListDirTool';
+import { PlanTool } from '../src/tools/PlanTool';
 import { ITool } from '../src/tools/ToolInterface';
 
 // Simple test runner
@@ -63,13 +64,15 @@ multiRegistry.register(new TaskCompleteTool());
 multiRegistry.register(new GrepTool());
 multiRegistry.register(new GlobTool());
 multiRegistry.register(new ListDirTool());
+	multiRegistry.register(new PlanTool());
 
-assert(multiRegistry.list().length === 8, 'Registry has 8 tools');
+assert(multiRegistry.list().length === 9, 'Registry has 9 tools');
 assert(multiRegistry.list().includes('read_file'), 'Has read_file');
 assert(multiRegistry.list().includes('write_file'), 'Has write_file');
 assert(multiRegistry.list().includes('edit_file'), 'Has edit_file');
 assert(multiRegistry.list().includes('bash'), 'Has bash');
 assert(multiRegistry.list().includes('task_complete'), 'Has task_complete');
+	assert(multiRegistry.list().includes('plan'), 'Has plan');
 
 // Test: Unknown tool error
 console.log('\n🧪 Error Handling Tests');

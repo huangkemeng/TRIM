@@ -1,6 +1,7 @@
 import { DeepSeekClient } from '../api/DeepSeekClient';
 import { ToolRegistry } from '../tools/ToolRegistry';
 import { ToolResult } from '../tools/ToolInterface';
+import { PlanTool } from '../tools/PlanTool';
 import { AgentContext } from './AgentContext';
 import { MessageManager } from './MessageManager';
 
@@ -48,6 +49,7 @@ export class Agent {
   private recentToolCalls: ToolCallRecord[] = [];
   private toolResults: ToolResultRecord[] = [];
   private consecutiveApiErrors = 0;
+  private planTool: PlanTool | null = null;
   private static readonly MAX_REPEATED_CALLS = 5;
   private static readonly REPEAT_WINDOW_MS = 60000; // 1 minute
   private static readonly MAX_CONSECUTIVE_API_ERRORS = 3;
@@ -67,6 +69,15 @@ export class Agent {
     this.context = new AgentContext(config.maxTokens);
     this.messageManager = new MessageManager(config.maxTokens);
     this.callbacks = callbacks;
+    // Extract PlanTool reference if registered
+    try {
+      const planTool = toolRegistry.get('plan');
+      if (planTool instanceof PlanTool) {
+        this.planTool = planTool;
+      }
+    } catch {
+      // PlanTool not registered — that's okay
+    }
   }
 
   cancel(): void {
@@ -143,6 +154,7 @@ export class Agent {
     this.toolResults = [];
     this.consecutiveApiErrors = 0;
     this.abortController = new AbortController();
+    this.planTool?.reset();
     const abortSignal = this.abortController.signal;
 
     // Add system prompt
@@ -163,14 +175,40 @@ export class Agent {
     let consecutiveEmptyResponses = 0;
     let consecutiveTextOnlyResponses = 0;
     let totalTokensUsed = 0;
+    let budgetWarningGiven = false;
+    let gracefulShutdownRequested = false;
     const MAX_EMPTY_RESPONSES = 3;
     const MAX_TEXT_ONLY_RESPONSES = 2;
+    const BUDGET_WARNING_THRESHOLD = 0.7;
+    // Allow one extra iteration for graceful shutdown summary
+    const effectiveMaxIterations = this.config.maxIterations + 1;
 
-    while (iterations < this.config.maxIterations && !this.cancelled) {
+    while (iterations < effectiveMaxIterations && !this.cancelled) {
       iterations++;
       this.callbacks.onStatus?.(
         `Iteration ${iterations}/${this.config.maxIterations}`
       );
+
+      // --- Budget monitoring: warn at 70% ---
+      const remaining = this.config.maxIterations - iterations;
+      if (!budgetWarningGiven && remaining <= Math.ceil(this.config.maxIterations * (1 - BUDGET_WARNING_THRESHOLD))) {
+        budgetWarningGiven = true;
+        this.context.addMessage({
+          role: 'system',
+          content: `[Budget Warning: approximately ${remaining} iterations remaining. Prioritize completing the most important work. If you cannot finish everything, save progress and call task_complete with a summary of what was accomplished.]`,
+          timestamp: Date.now(),
+        });
+      }
+
+      // --- Graceful shutdown: when only 1 iteration left (the extra one) ---
+      if (remaining <= 0 && !gracefulShutdownRequested) {
+        gracefulShutdownRequested = true;
+        this.context.addMessage({
+          role: 'system',
+          content: `[You have reached the maximum iteration limit (${this.config.maxIterations}). Please summarize what you have accomplished so far and call task_complete with a progress summary. Do NOT start new work.]`,
+          timestamp: Date.now(),
+        });
+      }
 
       try {
         // Build messages and ensure context fits
@@ -270,6 +308,30 @@ export class Agent {
             // Check if this is task_complete
             if (toolName === 'task_complete') {
               const summary = (args.summary as string) || 'Task completed';
+
+              // --- Plan completion verification ---
+              if (this.planTool) {
+                const planStatus = this.planTool.getStatus();
+                if (planStatus.incomplete.length > 0) {
+                  // Plan has incomplete steps — warn and let AI decide
+                  this.callbacks.onStatus?.(
+                    `Plan check: ${planStatus.completed.length}/${planStatus.total} steps completed. ${planStatus.incomplete.length} steps remaining.`
+                  );
+
+                  // If graceful shutdown was requested, allow completion anyway
+                  if (!gracefulShutdownRequested) {
+                    const warning = `[Plan Check: The following plan steps are not yet completed: ${planStatus.incomplete.join(', ')}. ` +
+                      `If you are confident the task is done, call task_complete again. Otherwise, continue working by completing the remaining steps or updating the plan.]`;
+                    this.context.addMessage({
+                      role: 'system',
+                      content: warning,
+                      timestamp: Date.now(),
+                    });
+                    continue; // Give AI a chance to continue
+                  }
+                }
+              }
+
               this.callbacks.onToolResult?.(toolName, {
                 success: true,
                 data: summary,
@@ -384,9 +446,15 @@ export class Agent {
       this.callbacks.onStatus?.(
         `Reached max iterations (${this.config.maxIterations}).`
       );
-      this.callbacks.onComplete?.(
-        `Task stopped after ${this.config.maxIterations} iterations.`
-      );
+      // Try to get a final summary from the plan tool
+      let summary = `Task stopped after ${this.config.maxIterations} iterations.`;
+      if (this.planTool) {
+        const status = this.planTool.getStatus();
+        summary += ` Plan progress: ${status.completed.length}/${status.total} steps completed.`;
+        const goal = this.planTool.getGoal();
+        if (goal) summary += ` Goal: ${goal}`;
+      }
+      this.callbacks.onComplete?.(summary);
     }
   }
 }

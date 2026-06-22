@@ -12,6 +12,7 @@ import { ListDirTool } from './tools/ListDirTool';
 import { BashTool } from './tools/BashTool';
 import { AskUserTool } from './tools/AskUserTool';
 import { TaskCompleteTool } from './tools/TaskCompleteTool';
+import { PlanTool } from './tools/PlanTool';
 import { SidebarProvider } from './ui/sidebar/SidebarProvider';
 
 let currentAgent: Agent | undefined;
@@ -30,6 +31,7 @@ function registerAllTools(registry: ToolRegistry): void {
   registry.register(new BashTool());
   registry.register(new AskUserTool());
   registry.register(new TaskCompleteTool());
+  registry.register(new PlanTool());
 }
 
 async function startTask(task: string, sidebar: SidebarProvider, ctx: vscode.ExtensionContext) {

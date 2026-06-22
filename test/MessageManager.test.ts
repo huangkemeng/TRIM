@@ -22,7 +22,7 @@ const systemPrompt = manager.buildSystemPrompt('/test/workspace');
 assert(systemPrompt.includes('autonomous AI coding agent'), 'System prompt mentions "autonomous AI coding agent"');
 assert(systemPrompt.includes('/test/workspace'), 'System prompt includes workspace path');
 assert(systemPrompt.includes('task_complete'), 'System prompt mentions task_complete');
-assert(systemPrompt.includes('tools available'), 'System prompt mentions using tools');
+assert(systemPrompt.includes('plan tool'), 'System prompt mentions planning');
 
 // Test: Token estimation
 const emptyMessage: any[] = [];

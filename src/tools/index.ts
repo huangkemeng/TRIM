@@ -8,4 +8,5 @@ export { ListDirTool } from './ListDirTool';
 export { BashTool } from './BashTool';
 export { AskUserTool } from './AskUserTool';
 export { TaskCompleteTool } from './TaskCompleteTool';
+export { PlanTool } from './PlanTool';
 export type { ITool, ToolDefinition, ToolResult } from './ToolInterface';
