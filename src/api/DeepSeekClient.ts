@@ -3,6 +3,7 @@ import {
   ChatMessage,
   LLMResponse,
   ToolCall,
+  StreamOptions,
 } from './types';
 
 // Tool schema format for OpenAI-compatible API
@@ -21,6 +22,31 @@ interface ToolSchema {
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
+
+/**
+ * Returns a Promise that resolves to 'aborted' when the signal is aborted.
+ * This allows racing abort against stream iteration.
+ */
+function waitForAbort(signal: AbortSignal): Promise<'aborted'> {
+  return new Promise(resolve => {
+    if (signal.aborted) {
+      resolve('aborted');
+      return;
+    }
+    const onAbort = () => {
+      signal.removeEventListener('abort', onAbort);
+      resolve('aborted');
+    };
+    signal.addEventListener('abort', onAbort);
+  });
+}
+
+/**
+ * A promise that never resolves — used as the "no signal" fallback in Promise.race.
+ */
+function never(): Promise<never> {
+  return new Promise<never>(() => {});
+}
 
 export class DeepSeekClient {
   private client: OpenAI;
@@ -148,16 +174,18 @@ export class DeepSeekClient {
    */
   async chatStream(
     messages: ChatMessage[],
-    options: {
-      tools?: ToolSchema[];
-      onToken?: (token: string) => void;
-      onToolCall?: (toolCall: ToolCall) => void;
-    }
+    options: StreamOptions
   ): Promise<LLMResponse> {
     let lastError: any;
+    const signal = options.signal;
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
+        // Check if already aborted before making the request
+        if (signal?.aborted) {
+          throw new DOMException('Aborted', 'AbortError');
+        }
+
         const stream = await this.client.chat.completions.create({
           model: this.model,
           messages: this.toOpenAIMessages(messages),
@@ -173,7 +201,31 @@ export class DeepSeekClient {
           { id: string; type: string; name: string; arguments: string }
         >();
 
-        for await (const chunk of stream) {
+        // Iterate over the stream, yielding to abort signal
+        const iterator = stream[Symbol.asyncIterator]();
+        while (true) {
+          // Check abort signal before each chunk
+          if (signal?.aborted) {
+            // Close the stream to clean up resources
+            await iterator.return?.();
+            throw new DOMException('Aborted', 'AbortError');
+          }
+
+          // Race between next chunk and abort signal
+          const result = await Promise.race([
+            iterator.next(),
+            signal ? waitForAbort(signal) : never(),
+          ]);
+
+          // If waitForAbort won, result is 'aborted'
+          if (result === 'aborted') {
+            await iterator.return?.();
+            throw new DOMException('Aborted', 'AbortError');
+          }
+
+          if (result.done) break;
+
+          const chunk = result.value;
           const delta = chunk.choices[0]?.delta;
 
           if (delta?.content) {
@@ -217,6 +269,11 @@ export class DeepSeekClient {
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
         };
       } catch (error: any) {
+        // If aborted, don't retry — propagate immediately
+        if (error?.name === 'AbortError') {
+          throw error;
+        }
+
         lastError = error;
 
         if (this.isRetryable(error) && attempt < MAX_RETRIES) {

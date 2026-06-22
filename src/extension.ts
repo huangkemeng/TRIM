@@ -18,6 +18,7 @@ let currentAgent: Agent | undefined;
 let currentConversationId: string | undefined;
 let sidebarProvider: SidebarProvider | undefined;
 let outputChannel: vscode.OutputChannel | undefined;
+let isTaskRunning = false;
 
 function registerAllTools(registry: ToolRegistry): void {
   registry.register(new ReadFileTool());
@@ -32,6 +33,13 @@ function registerAllTools(registry: ToolRegistry): void {
 }
 
 async function startTask(task: string, sidebar: SidebarProvider, ctx: vscode.ExtensionContext) {
+  // Cancel any existing task before starting a new one
+  if (isTaskRunning && currentAgent) {
+    outputChannel?.appendLine('⏹️ Cancelling previous task before starting new one...');
+    currentAgent.cancel();
+    currentAgent = undefined;
+  }
+
   const config = loadConfiguration();
   if (!config.apiKey) {
     const result = await vscode.window.showErrorMessage('TRIM: DeepSeek API Key is not configured.', 'Open Settings');
@@ -85,14 +93,17 @@ async function startTask(task: string, sidebar: SidebarProvider, ctx: vscode.Ext
       outputChannel?.appendLine(`\n✅ TASK COMPLETE: ${summary}`);
       if (currentConversationId) sidebar.updateConversation(currentConversationId, { status: 'completed', summary });
       vscode.window.showInformationMessage('TRIM task completed!');
+      isTaskRunning = false;
     },
     onError: (error: string) => {
       sidebar.finalizeMessage();
       outputChannel?.appendLine(`\n❌ Error: ${error}`);
       if (currentConversationId) sidebar.updateConversation(currentConversationId, { status: 'failed', summary: error });
+      isTaskRunning = false;
     },
   });
 
+  isTaskRunning = true;
   outputChannel?.appendLine(`\n🚀 Starting TRIM Task\nTask: ${task}\nModel: ${config.model}`);
 
   try {
@@ -100,6 +111,8 @@ async function startTask(task: string, sidebar: SidebarProvider, ctx: vscode.Ext
   } catch (error: any) {
     const errorMessage = error?.message || String(error);
     if (!errorMessage.includes('Canceled')) outputChannel?.appendLine(`\n❌ Unhandled error: ${errorMessage}`);
+  } finally {
+    isTaskRunning = false;
   }
 }
 

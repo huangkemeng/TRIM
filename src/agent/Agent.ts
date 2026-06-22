@@ -1,7 +1,7 @@
 import { DeepSeekClient } from '../api/DeepSeekClient';
 import { ToolRegistry } from '../tools/ToolRegistry';
 import { ToolResult } from '../tools/ToolInterface';
-import { AgentContext, Message } from './AgentContext';
+import { AgentContext } from './AgentContext';
 import { MessageManager } from './MessageManager';
 
 export interface AgentConfig {
@@ -29,6 +29,11 @@ interface ToolCallRecord {
   timestamp: number;
 }
 
+interface ToolResultRecord {
+  success: boolean;
+  timestamp: number;
+}
+
 export class Agent {
   private config: AgentConfig;
   private toolRegistry: ToolRegistry;
@@ -37,11 +42,18 @@ export class Agent {
   private messageManager: MessageManager;
   private callbacks: AgentCallbacks;
   private cancelled: boolean = false;
+  private abortController: AbortController | null = null;
 
   // Loop detection
   private recentToolCalls: ToolCallRecord[] = [];
+  private toolResults: ToolResultRecord[] = [];
+  private consecutiveApiErrors = 0;
   private static readonly MAX_REPEATED_CALLS = 5;
   private static readonly REPEAT_WINDOW_MS = 60000; // 1 minute
+  private static readonly MAX_CONSECUTIVE_API_ERRORS = 3;
+  private static readonly TOOL_FAILURE_WINDOW = 10;
+  private static readonly TOOL_FAILURE_THRESHOLD = 0.7;
+  private static readonly MAX_ALTERNATING_CYCLES = 8; // 8 repeats of a 2-tool pattern = 16 calls
 
   constructor(
     config: AgentConfig,
@@ -59,10 +71,13 @@ export class Agent {
 
   cancel(): void {
     this.cancelled = true;
+    this.abortController?.abort();
   }
 
   /**
-   * Check if the agent is stuck in a loop by detecting repeated tool calls.
+   * Check if the agent is stuck in a loop by detecting:
+   * 1. Repeated tool calls with same name+args (exact repeat)
+   * 2. Alternating tool call patterns (e.g., A→B→A→B→A→B)
    * Returns true if a loop is detected.
    */
   private detectLoop(toolName: string, args: Record<string, unknown>): boolean {
@@ -77,18 +92,58 @@ export class Agent {
       r => now - r.timestamp < Agent.REPEAT_WINDOW_MS
     );
 
-    // Count repeats of this exact tool + args
+    // Check 1: Exact repeat detection (same tool + same args)
     const repeatCount = this.recentToolCalls.filter(
       r => r.toolName === toolName && r.argsKey === argsKey
     ).length;
 
-    return repeatCount >= Agent.MAX_REPEATED_CALLS;
+    if (repeatCount >= Agent.MAX_REPEATED_CALLS) {
+      return true;
+    }
+
+    // Check 2: Alternating pattern detection (e.g., A→B→A→B→A→B)
+    // Only check if we have enough recent calls
+    if (this.recentToolCalls.length >= 6) {
+      // Get the last N tool names in order
+      const recentNames = this.recentToolCalls.map(r => r.toolName);
+
+      // Look for a 2-tool alternating pattern in the last 6+ calls
+      // e.g., [A, B, A, B, A, B] or [A, A, B, A, A, B]
+      for (let patternLen = 2; patternLen <= 3; patternLen++) {
+        const lastN = recentNames.slice(-patternLen * 3); // Need at least 3 cycles
+        if (lastN.length < patternLen * 3) continue;
+
+        // Check if the pattern repeats
+        const pattern = lastN.slice(0, patternLen);
+        let isAlternating = true;
+        for (let i = 0; i < lastN.length; i++) {
+          if (lastN[i] !== pattern[i % patternLen]) {
+            isAlternating = false;
+            break;
+          }
+        }
+
+        if (isAlternating) {
+          // Found a repeating pattern — check how many times it's cycled
+          const cycles = Math.floor(lastN.length / patternLen);
+          if (cycles >= Agent.MAX_ALTERNATING_CYCLES / patternLen) {
+            return true;
+          }
+        }
+      }
+    }
+
+    return false;
   }
 
   async run(task: string): Promise<void> {
     this.cancelled = false;
     this.context.clear();
     this.recentToolCalls = [];
+    this.toolResults = [];
+    this.consecutiveApiErrors = 0;
+    this.abortController = new AbortController();
+    const abortSignal = this.abortController.signal;
 
     // Add system prompt
     const systemPrompt = this.messageManager.buildSystemPrompt(
@@ -106,8 +161,10 @@ export class Agent {
 
     let iterations = 0;
     let consecutiveEmptyResponses = 0;
+    let consecutiveTextOnlyResponses = 0;
     let totalTokensUsed = 0;
     const MAX_EMPTY_RESPONSES = 3;
+    const MAX_TEXT_ONLY_RESPONSES = 2;
 
     while (iterations < this.config.maxIterations && !this.cancelled) {
       iterations++;
@@ -134,6 +191,7 @@ export class Agent {
         const response = await this.deepseekClient.chatStream(chatMessages, {
           tools: toolSchemas,
           onToken: token => this.callbacks.onToken?.(token),
+          signal: abortSignal,
         });
 
         // Track token usage (rough estimate: content length / 4)
@@ -166,9 +224,11 @@ export class Agent {
           continue;
         }
         consecutiveEmptyResponses = 0;
+        consecutiveTextOnlyResponses = 0; // Reset when we got a valid response
 
         // Check if there are tool calls
         if (response.toolCalls && response.toolCalls.length > 0) {
+          consecutiveTextOnlyResponses = 0; // Reset counter when tools are used
           // Add assistant message with tool calls to context
           this.context.addAssistantMessage(
             response.content,
@@ -226,6 +286,7 @@ export class Agent {
               this.context.addToolResult(toolCall.id, result);
               this.callbacks.onToolResult?.(toolName, result);
               toolResults.push(result);
+              this.toolResults.push({ success: result.success, timestamp: Date.now() });
             } catch (error: any) {
               const errorResult: ToolResult = {
                 success: false,
@@ -235,6 +296,7 @@ export class Agent {
               this.context.addToolResult(toolCall.id, errorResult);
               this.callbacks.onToolResult?.(toolName, errorResult);
               toolResults.push(errorResult);
+              this.toolResults.push({ success: false, timestamp: Date.now() });
             }
           }
 
@@ -244,7 +306,7 @@ export class Agent {
             for (const tc of response.toolCalls) {
               // Only add if not already responded to
               const lastMsg = this.context.getMessages()[this.context.length - 1];
-              if (lastMsg?.role === 'assistant' || lastMsg?.tool_call_id !== tc.id) {
+              if (lastMsg?.role === 'assistant' && lastMsg?.tool_call_id !== tc.id) {
                 this.context.addToolResult(tc.id, {
                   success: false,
                   data: '',
@@ -253,16 +315,39 @@ export class Agent {
               }
             }
           }
+
+          // Check tool failure rate: if > 70% of recent tool calls failed, stop
+          const now = Date.now();
+          this.toolResults = this.toolResults.filter(r => now - r.timestamp < 120000);
+          if (this.toolResults.length >= Agent.TOOL_FAILURE_WINDOW) {
+            const failures = this.toolResults.filter(r => !r.success).length;
+            const rate = failures / this.toolResults.length;
+            if (rate >= Agent.TOOL_FAILURE_THRESHOLD) {
+              const msg = `Tool failure rate too high: ${Math.round(rate * 100)}% (${failures}/${this.toolResults.length} failed). Stopping.`;
+              this.callbacks.onError?.(msg);
+              this.callbacks.onComplete?.(msg);
+              return;
+            }
+          }
         } else {
           // No tool calls - just text response
           this.context.addAssistantMessage(response.content);
           this.callbacks.onStatus?.('Agent is thinking...');
+
+          // Auto-complete: if AI gives text-only responses without calling
+          // task_complete, it likely answered a simple question. Treat as done
+          // after N consecutive text-only iterations.
+          consecutiveTextOnlyResponses++;
+          if (consecutiveTextOnlyResponses >= MAX_TEXT_ONLY_RESPONSES) {
+            this.callbacks.onComplete?.(response.content);
+            return;
+          }
         }
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
 
-        // If cancelled, exit silently (no retry, no error reporting)
-        if (this.cancelled) {
+        // If cancelled or aborted, exit silently
+        if (this.cancelled || error?.name === 'AbortError') {
           return;
         }
 
@@ -279,6 +364,14 @@ export class Agent {
 
         this.callbacks.onError?.(errorMessage);
         this.callbacks.onStatus?.(`Error: ${errorMessage}. Retrying...`);
+
+        // Track consecutive API errors. If too many, stop.
+        this.consecutiveApiErrors++;
+        if (this.consecutiveApiErrors >= Agent.MAX_CONSECUTIVE_API_ERRORS) {
+          this.callbacks.onError?.(`Too many consecutive API errors (${this.consecutiveApiErrors}). Stopping.`);
+          this.callbacks.onComplete?.(`Task failed after ${this.consecutiveApiErrors} consecutive API errors.`);
+          return;
+        }
 
         // Add error context so agent can self-correct on next iteration
         this.context.addAssistantMessage(`[System error occurred: ${errorMessage}]`);

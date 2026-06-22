@@ -30,18 +30,25 @@ export class AskUserTool implements ITool {
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const question = args.question as string;
 
-    // Show dialog to user
-    const response = await vscode.window.showInputBox({
-      prompt: `TRIM asks: ${question}`,
-      placeHolder: 'Type your response...',
-      ignoreFocusOut: true,
-    });
+    // Race the input dialog against a timeout to prevent indefinite blocking
+    const ASK_USER_TIMEOUT_MS = 120000; // 2 minutes
+
+    const response = await Promise.race([
+      vscode.window.showInputBox({
+        prompt: `TRIM asks: ${question}`,
+        placeHolder: 'Type your response...',
+        ignoreFocusOut: true,
+      }),
+      new Promise<undefined>(resolve =>
+        setTimeout(() => resolve(undefined), ASK_USER_TIMEOUT_MS)
+      ),
+    ]);
 
     if (response === undefined) {
-      // User cancelled
+      // User cancelled or timed out
       return {
         success: true,
-        data: 'User cancelled the input prompt. Please try a different approach or ask a different question.',
+        data: 'User cancelled the input prompt or did not respond in time. Please try a different approach or ask a different question.',
       };
     }
 

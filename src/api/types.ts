@@ -50,3 +50,20 @@ export interface LLMResponse {
     totalTokens: number;
   };
 }
+
+export interface StreamOptions {
+  tools?: Array<{
+    type: 'function';
+    function: {
+      name: string;
+      description: string;
+      parameters: {
+        type: 'object';
+        properties: Record<string, unknown>;
+        required: string[];
+      };
+    };
+  }>;
+  onToken?: (token: string) => void;
+  signal?: AbortSignal;
+}

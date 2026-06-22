@@ -34,7 +34,9 @@ export class MessageManager {
 - Prefer surgical edits (edit_file) over full rewrites (write_file) for small changes.
 - Run tests after making changes to verify they work.
 - If you're stuck or need clarification, use the ask_user tool.
-- When the task is complete, call task_complete with a summary.
+- **When the task is complete, ALWAYS call task_complete with a summary of what was done.**
+- **If the user asks a simple question (not a coding task), answer concisely and call task_complete immediately after. Do NOT repeat yourself or answer multiple times.**
+- **If you respond with text only and no tool calls, the system will assume you have completed the task.**
 
 ## Working Directory
 The workspace is at: ${workspaceRoot}
@@ -61,6 +63,8 @@ Use absolute paths when working with files.`;
   /**
    * Ensure messages fit within the token budget.
    * Strategy: Remove oldest non-system messages when over budget.
+   * Falls back to progressively fewer messages if the initial truncation
+   * still exceeds the threshold, down to an absolute minimum of 2 messages.
    */
   ensureContextFit(messages: Message[]): Message[] {
     const totalTokens = this.estimateTokenCount(messages);
@@ -74,17 +78,33 @@ Use absolute paths when working with files.`;
     const systemMessages = messages.filter(m => m.role === 'system');
     const conversationMessages = messages.filter(m => m.role !== 'system');
 
-    // Keep last N conversation messages (preserve most recent context)
-    const keepCount = Math.max(30, Math.floor(conversationMessages.length * 0.4));
-    const kept = conversationMessages.slice(-keepCount);
+    // Try progressively smaller keep counts until under threshold
+    const MIN_KEEP = 2;
+    let keepCount = Math.max(30, Math.floor(conversationMessages.length * 0.4));
 
-    const result = [...systemMessages, ...kept];
+    while (keepCount >= MIN_KEEP) {
+      const kept = conversationMessages.slice(-keepCount);
+      const result = [...systemMessages, ...kept];
+      const estimatedTokens = this.estimateTokenCount(result);
 
+      if (estimatedTokens < threshold) {
+        console.log(
+          `[MessageManager] Truncated from ${messages.length} to ${result.length} messages ` +
+          `(estimated tokens: ~${totalTokens} -> ~${estimatedTokens})`
+        );
+        return result;
+      }
+
+      // Reduce keep count: try 60% of current, or drop by 5, whichever is larger
+      keepCount = Math.max(MIN_KEEP, Math.min(Math.floor(keepCount * 0.6), keepCount - 5));
+    }
+
+    // Absolute fallback: keep system + last 2 messages
+    const lastResort = [...systemMessages, ...conversationMessages.slice(-MIN_KEEP)];
     console.log(
-      `[MessageManager] Truncated from ${messages.length} to ${result.length} messages ` +
-      `(estimated tokens: ~${totalTokens} -> ~${this.estimateTokenCount(result)})`
+      `[MessageManager] Aggressive truncation: ${messages.length} -> ${lastResort.length} messages ` +
+      `(estimated tokens: ~${totalTokens} -> ~${this.estimateTokenCount(lastResort)})`
     );
-
-    return result;
+    return lastResort;
   }
 }
