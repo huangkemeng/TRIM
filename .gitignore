@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+out/
+
+# VS Code extension artifacts
+*.vsix
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.vscode/settings.json
+.vscode/settings.local.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# Test
+.vscode-test/

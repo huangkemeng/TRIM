@@ -1,0 +1,5 @@
+{
+  "key": "ctrl+shift+a",
+  "command": "trim.start",
+  "when": "editorTextFocus"
+}

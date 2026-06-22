@@ -1,0 +1,99 @@
+{
+  "name": "trim-agent",
+  "displayName": "TRIM",
+  "description": "Token-Reduced Intelligent Maker - Autonomous coding agent powered by DeepSeek API",
+  "version": "0.1.0",
+  "publisher": "trim-dev",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "trim.start",
+        "title": "TRIM: Start New Task"
+      },
+      {
+        "command": "trim.stop",
+        "title": "TRIM: Stop Current Task"
+      }
+    ],
+    "configuration": {
+      "title": "TRIM",
+      "properties": {
+        "trim.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "DeepSeek API Key"
+        },
+        "trim.model": {
+          "type": "string",
+          "enum": [
+            "deepseek-chat",
+            "deepseek-reasoner"
+          ],
+          "default": "deepseek-chat",
+          "description": "DeepSeek model to use"
+        },
+        "trim.temperature": {
+          "type": "number",
+          "default": 0.1,
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Model temperature (lower = more deterministic)"
+        },
+        "trim.maxIterations": {
+          "type": "number",
+          "default": 100,
+          "minimum": 1,
+          "maximum": 500,
+          "description": "Maximum agent loop iterations per task"
+        },
+        "trim.maxTokens": {
+          "type": "number",
+          "default": 128000,
+          "description": "Maximum context window tokens"
+        },
+        "trim.autoApproveCommands": {
+          "type": "boolean",
+          "default": false,
+          "description": "Auto-approve terminal commands without user confirmation"
+        }
+      }
+    },
+    "keybindings": [
+      {
+        "command": "trim.start",
+        "key": "ctrl+shift+a",
+        "when": "editorTextFocus"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --watch",
+    "lint": "tsc --noEmit",
+    "pretest": "npm run build",
+    "test": "node test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "^1.96.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.22.4",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {
+    "openai": "^4.93.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": ""
+  }
+}

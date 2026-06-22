@@ -1,0 +1,161 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+/* Header */
+#header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+#task-display {
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#task-label {
+  font-weight: 600;
+  color: var(--vscode-textLink-foreground);
+  margin-right: 4px;
+}
+
+#task-text {
+  color: var(--vscode-editor-foreground);
+}
+
+#controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+#iteration-display {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+#stop-btn {
+  background: var(--vscode-errorForeground);
+  color: white;
+  border: none;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#stop-btn:hover {
+  opacity: 0.8;
+}
+
+/* Messages area */
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.message {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+}
+
+.message.assistant {
+  background: var(--vscode-textBlockQuote-background);
+  border-left: 3px solid var(--vscode-textLink-foreground);
+}
+
+.message.tool-call {
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-left: 3px solid var(--vscode-editorInfo-foreground);
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.message.tool-result {
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-left: 3px solid var(--vscode-editorInfo-foreground);
+  font-family: monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.message.tool-result.success {
+  border-left-color: var(--vscode-testing-iconPassed);
+}
+
+.message.tool-result.error {
+  border-left-color: var(--vscode-testing-iconFailed);
+}
+
+.message.system {
+  background: transparent;
+  border-left: 3px solid var(--vscode-descriptionForeground);
+  font-style: italic;
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.message.complete {
+  background: var(--vscode-testing-iconPassed);
+  color: white;
+  border-left: 3px solid var(--vscode-testing-iconPassed);
+  font-weight: 600;
+}
+
+.message.error {
+  background: var(--vscode-inputValidation-errorBackground);
+  border-left: 3px solid var(--vscode-inputValidation-errorBorder);
+}
+
+.message-header {
+  font-weight: 600;
+  margin-bottom: 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.tool-args {
+  background: var(--vscode-editor-background);
+  padding: 6px 8px;
+  border-radius: 4px;
+  margin-top: 4px;
+  font-family: monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+}
