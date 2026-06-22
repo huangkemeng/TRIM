@@ -12,11 +12,9 @@ import { ListDirTool } from './tools/ListDirTool';
 import { BashTool } from './tools/BashTool';
 import { AskUserTool } from './tools/AskUserTool';
 import { TaskCompleteTool } from './tools/TaskCompleteTool';
-import { AgentWebview } from './ui/AgentWebview';
 import { SidebarProvider } from './ui/sidebar/SidebarProvider';
 
 let currentAgent: Agent | undefined;
-let webview: AgentWebview | undefined;
 let currentConversationId: string | undefined;
 let sidebarProvider: SidebarProvider | undefined;
 let outputChannel: vscode.OutputChannel | undefined;
@@ -54,11 +52,10 @@ async function startTask(task: string, sidebar: SidebarProvider, ctx: vscode.Ext
 
   const toolRegistry = new ToolRegistry();
   registerAllTools(toolRegistry);
-  currentConversationId = sidebar.addConversation(task, config.model);
 
-  webview = new AgentWebview(ctx.extensionUri);
-  webview.show();
-  webview.setTask(task);
+  // Create conversation record and enter chat view
+  currentConversationId = sidebar.addConversation(task, config.model);
+  sidebar.enterChat(currentConversationId, task);
 
   const agentConfig: AgentConfig = {
     apiKey: config.apiKey,
@@ -70,13 +67,13 @@ async function startTask(task: string, sidebar: SidebarProvider, ctx: vscode.Ext
   };
 
   currentAgent = new Agent(agentConfig, toolRegistry, deepseekClient, {
-    onToken: (token: string) => webview?.streamToken(token),
+    onToken: (token: string) => sidebar.streamToken(token),
     onToolCall: (toolName: string, args: Record<string, unknown>) => {
-      webview?.showToolCall(toolName, args);
+      sidebar.addToolCall(toolName, args);
       outputChannel?.appendLine(`\n🔧 Tool: ${toolName}`);
     },
     onToolResult: (toolName: string, result) => {
-      webview?.showToolResult(toolName, result);
+      sidebar.setToolResult(toolName, result);
       outputChannel?.appendLine(`${result.success ? '✅' : '❌'} ${toolName}: ${result.data.slice(0, 200)}`);
     },
     onUsage: (tokensUsed: number) => {
@@ -84,19 +81,17 @@ async function startTask(task: string, sidebar: SidebarProvider, ctx: vscode.Ext
     },
     onStatus: (status: string) => outputChannel?.appendLine(`[${new Date().toLocaleTimeString()}] ${status}`),
     onComplete: (summary: string) => {
-      webview?.showTaskComplete(summary);
+      sidebar.finalizeMessage();
       outputChannel?.appendLine(`\n✅ TASK COMPLETE: ${summary}`);
       if (currentConversationId) sidebar.updateConversation(currentConversationId, { status: 'completed', summary });
       vscode.window.showInformationMessage('TRIM task completed!');
     },
     onError: (error: string) => {
-      webview?.showError(error);
+      sidebar.finalizeMessage();
       outputChannel?.appendLine(`\n❌ Error: ${error}`);
       if (currentConversationId) sidebar.updateConversation(currentConversationId, { status: 'failed', summary: error });
     },
   });
-
-  webview.onStop(() => currentAgent?.cancel());
 
   outputChannel?.appendLine(`\n🚀 Starting TRIM Task\nTask: ${task}\nModel: ${config.model}`);
 
@@ -117,7 +112,7 @@ export function activate(context: vscode.ExtensionContext) {
   sidebarProvider = new SidebarProvider(context.extensionUri, context.globalState);
   context.subscriptions.push(vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider));
 
-  // Wire: send message from sidebar input → start new task
+  // Wire: send message from sidebar input → start task or continue conversation
   sidebarProvider.onSendMessage = async (text: string) => {
     if (sidebarProvider) await startTask(text, sidebarProvider, context);
   };
@@ -127,12 +122,17 @@ export function activate(context: vscode.ExtensionContext) {
     if (sidebarProvider) await startTask(task, sidebarProvider, context);
   };
 
-  // Wire: click history item → open AgentWebview with context
+  // Wire: click history item → show conversation summary in chat view
   sidebarProvider.onOpenConversation = (id: string) => {
     const conv = sidebarProvider?.getConversation(id);
-    webview = new AgentWebview(context.extensionUri);
-    webview.show();
-    webview.setTask(conv?.task || `Resuming conversation`);
+    if (conv && sidebarProvider) {
+      sidebarProvider.enterChat(id, conv.task);
+      sidebarProvider.finalizeMessage();
+      // Show a summary message
+      const summary = conv.summary || 'No summary available.';
+      sidebarProvider.streamToken(`**Conversation resumed:** ${conv.title}\n\nStatus: ${conv.status}  •  Tokens: ${conv.tokensUsed}\n\n${summary}`);
+      sidebarProvider.finalizeMessage();
+    }
   };
 
   // Commands
@@ -148,7 +148,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (currentAgent) {
         currentAgent.cancel();
         outputChannel?.appendLine('\n⏹️ TRIM stopped by user.');
-        webview?.showError('Stopped by user');
+        sidebarProvider?.finalizeMessage();
         if (currentConversationId && sidebarProvider) sidebarProvider.updateConversation(currentConversationId, { status: 'stopped' });
       } else {
         vscode.window.showInformationMessage('No TRIM task is currently running.');
@@ -163,8 +163,6 @@ export function activate(context: vscode.ExtensionContext) {
 
 export function deactivate() {
   currentAgent?.cancel();
-  webview?.close();
   currentAgent = undefined;
-  webview = undefined;
   currentConversationId = undefined;
 }
