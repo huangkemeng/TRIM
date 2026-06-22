@@ -20,6 +20,7 @@ export interface AgentCallbacks {
   onStatus?: (status: string) => void;
   onComplete?: (summary: string) => void;
   onError?: (error: string) => void;
+  onUsage?: (tokensUsed: number) => void;
 }
 
 interface ToolCallRecord {
@@ -105,6 +106,7 @@ export class Agent {
 
     let iterations = 0;
     let consecutiveEmptyResponses = 0;
+    let totalTokensUsed = 0;
     const MAX_EMPTY_RESPONSES = 3;
 
     while (iterations < this.config.maxIterations && !this.cancelled) {
@@ -133,6 +135,17 @@ export class Agent {
           tools: toolSchemas,
           onToken: token => this.callbacks.onToken?.(token),
         });
+
+        // Track token usage (rough estimate: content length / 4)
+        if (response.content) {
+          totalTokensUsed += Math.ceil(response.content.length / 4);
+        }
+        if (response.toolCalls) {
+          for (const tc of response.toolCalls) {
+            totalTokensUsed += Math.ceil(tc.function.arguments.length / 4);
+          }
+        }
+        this.callbacks.onUsage?.(totalTokensUsed);
 
         // Check for empty responses (no content and no tool calls)
         if (!response.content && (!response.toolCalls || response.toolCalls.length === 0)) {

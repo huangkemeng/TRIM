@@ -1,6 +1,6 @@
 export interface DeepSeekConfig {
   apiKey: string;
-  model: 'deepseek-chat' | 'deepseek-reasoner';
+  model: 'deepseek-v4-flash' | 'deepseek-v4-pro';
   temperature: number;
   maxTokens: number;
 }

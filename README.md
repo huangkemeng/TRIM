@@ -46,7 +46,7 @@ Open VS Code Settings (`Ctrl+,`) and search for "TRIM":
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `trim.apiKey` | `""` | **Required.** Your DeepSeek API key |
-| `trim.model` | `"deepseek-chat"` | Model to use (`deepseek-chat` or `deepseek-reasoner`) |
+| `trim.model` | `"deepseek-v4-flash"` | Model to use (`deepseek-v4-flash` or `deepseek-v4-pro`) |
 | `trim.temperature` | `0.1` | Model temperature (lower = more deterministic) |
 | `trim.maxIterations` | `100` | Maximum agent loop iterations per task |
 | `trim.maxTokens` | `128000` | Maximum context window tokens |

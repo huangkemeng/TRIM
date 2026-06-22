@@ -13,6 +13,34 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "trim-sidebar",
+          "title": "TRIM",
+          "icon": "media/trim-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "trim-sidebar": [
+        {
+          "type": "webview",
+          "id": "trim.main",
+          "name": "TRIM"
+        }
+      ]
+    },
+    "viewsWelcome": {
+      "trim.main": [
+        {
+          "conditions": [
+            "config.trim.apiKey == ''"
+          ],
+          "contents": "Configure your DeepSeek API key to get started.\n[Open Settings](command:trim.openSettings)"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "trim.start",
@@ -21,6 +49,18 @@
       {
         "command": "trim.stop",
         "title": "TRIM: Stop Current Task"
+      },
+      {
+        "command": "trim.openSettings",
+        "title": "TRIM: Open Settings"
+      },
+      {
+        "command": "trim.newConversation",
+        "title": "TRIM: New Conversation"
+      },
+      {
+        "command": "trim.clearHistory",
+        "title": "TRIM: Clear Conversation History"
       }
     ],
     "configuration": {
@@ -34,10 +74,10 @@
         "trim.model": {
           "type": "string",
           "enum": [
-            "deepseek-chat",
-            "deepseek-reasoner"
+            "deepseek-v4-flash",
+            "deepseek-v4-pro"
           ],
-          "default": "deepseek-chat",
+          "default": "deepseek-v4-flash",
           "description": "DeepSeek model to use"
         },
         "trim.temperature": {

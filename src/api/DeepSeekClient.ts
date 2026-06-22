@@ -30,7 +30,7 @@ export class DeepSeekClient {
 
   constructor(
     apiKey: string,
-    model: string = 'deepseek-chat',
+    model: string = 'deepseek-v4-flash',
     temperature: number = 0.1,
     maxTokens: number = 128000
   ) {

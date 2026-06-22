@@ -11,7 +11,7 @@ export function loadConfiguration(): ValidatedConfig {
   const config = vscode.workspace.getConfiguration('trim');
 
   const apiKey = config.get<string>('apiKey', '');
-  const model = config.get<'deepseek-chat' | 'deepseek-reasoner'>('model', 'deepseek-chat');
+  const model = config.get<'deepseek-v4-flash' | 'deepseek-v4-pro'>('model', 'deepseek-v4-flash');
   const temperature = config.get<number>('temperature', 0.1);
   const maxTokens = config.get<number>('maxTokens', 128000);
   const maxIterations = config.get<number>('maxIterations', 100);
@@ -37,15 +37,15 @@ export function loadConfiguration(): ValidatedConfig {
     );
   }
 
-  if (model !== 'deepseek-chat' && model !== 'deepseek-reasoner') {
+  if (model !== 'deepseek-v4-flash' && model !== 'deepseek-v4-pro') {
     vscode.window.showWarningMessage(
-      `TRIM: Unknown model "${model}". Using "deepseek-chat".`
+      `TRIM: Unknown model "${model}". Using "deepseek-v4-flash".`
     );
   }
 
   return {
     apiKey,
-    model: model === 'deepseek-chat' || model === 'deepseek-reasoner' ? model : 'deepseek-chat',
+    model: model === 'deepseek-v4-flash' || model === 'deepseek-v4-pro' ? model : 'deepseek-v4-flash',
     temperature: Math.max(0, Math.min(2, temperature)),
     maxTokens: Math.max(1000, Math.min(128000, maxTokens)),
     maxIterations: Math.max(1, Math.min(500, maxIterations)),
