@@ -37,7 +37,14 @@ export class AgentContext {
     });
   }
 
-  addToolResult(toolName: string, result: { success: boolean; data: string; error?: string }): void {
+  /**
+   * Add a tool result message. The tool_call_id MUST match the id
+   * from the assistant's tool_calls array.
+   */
+  addToolResult(
+    toolCallId: string,
+    result: { success: boolean; data: string; error?: string }
+  ): void {
     const content = result.success
       ? result.data
       : `Error: ${result.error || 'Unknown error'}`;
@@ -45,7 +52,7 @@ export class AgentContext {
     this.addMessage({
       role: 'tool',
       content,
-      tool_call_id: `call_${toolName}_${Date.now()}`,
+      tool_call_id: toolCallId,
       timestamp: Date.now(),
     });
   }

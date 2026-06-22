@@ -33,29 +33,17 @@ function registerAllTools(registry: ToolRegistry): void {
   registry.register(new TaskCompleteTool());
 }
 
-/** Shared task runner used by sidebar and commands */
 async function startTask(task: string, sidebar: SidebarProvider, ctx: vscode.ExtensionContext) {
   const config = loadConfiguration();
-
   if (!config.apiKey) {
-    const result = await vscode.window.showErrorMessage(
-      'TRIM: DeepSeek API Key is not configured.',
-      'Open Settings'
-    );
-    if (result === 'Open Settings') {
-      vscode.commands.executeCommand('workbench.action.openSettings', 'trim.apiKey');
-    }
+    const result = await vscode.window.showErrorMessage('TRIM: DeepSeek API Key is not configured.', 'Open Settings');
+    if (result === 'Open Settings') vscode.commands.executeCommand('workbench.action.openSettings', 'trim.apiKey');
     return;
   }
 
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '';
+  const deepseekClient = new DeepSeekClient(config.apiKey, config.model, config.temperature, config.maxTokens);
 
-  // Initialize DeepSeek client
-  const deepseekClient = new DeepSeekClient(
-    config.apiKey, config.model, config.temperature, config.maxTokens
-  );
-
-  // Validate connection
   outputChannel?.appendLine('Validating DeepSeek API connection...');
   const isValid = await deepseekClient.validateConnection();
   if (!isValid) {
@@ -64,19 +52,14 @@ async function startTask(task: string, sidebar: SidebarProvider, ctx: vscode.Ext
   }
   outputChannel?.appendLine('DeepSeek API connection successful!');
 
-  // Setup tools
   const toolRegistry = new ToolRegistry();
   registerAllTools(toolRegistry);
-
-  // Create conversation record
   currentConversationId = sidebar.addConversation(task, config.model);
 
-  // Create webview
   webview = new AgentWebview(ctx.extensionUri);
   webview.show();
   webview.setTask(task);
 
-  // Create agent config
   const agentConfig: AgentConfig = {
     apiKey: config.apiKey,
     model: config.model,
@@ -91,58 +74,37 @@ async function startTask(task: string, sidebar: SidebarProvider, ctx: vscode.Ext
     onToolCall: (toolName: string, args: Record<string, unknown>) => {
       webview?.showToolCall(toolName, args);
       outputChannel?.appendLine(`\n🔧 Tool: ${toolName}`);
-      outputChannel?.appendLine(`   Args: ${JSON.stringify(args).slice(0, 500)}`);
     },
     onToolResult: (toolName: string, result) => {
       webview?.showToolResult(toolName, result);
       outputChannel?.appendLine(`${result.success ? '✅' : '❌'} ${toolName}: ${result.data.slice(0, 200)}`);
     },
     onUsage: (tokensUsed: number) => {
-      if (currentConversationId) {
-        sidebar.updateConversation(currentConversationId, { tokensUsed });
-      }
+      if (currentConversationId) sidebar.updateConversation(currentConversationId, { tokensUsed });
     },
-    onStatus: (status: string) => {
-      outputChannel?.appendLine(`[${new Date().toLocaleTimeString()}] ${status}`);
-    },
+    onStatus: (status: string) => outputChannel?.appendLine(`[${new Date().toLocaleTimeString()}] ${status}`),
     onComplete: (summary: string) => {
       webview?.showTaskComplete(summary);
       outputChannel?.appendLine(`\n✅ TASK COMPLETE: ${summary}`);
-      if (currentConversationId) {
-        sidebar.updateConversation(currentConversationId, {
-          status: 'completed',
-          summary,
-        });
-      }
+      if (currentConversationId) sidebar.updateConversation(currentConversationId, { status: 'completed', summary });
       vscode.window.showInformationMessage('TRIM task completed!');
     },
     onError: (error: string) => {
       webview?.showError(error);
       outputChannel?.appendLine(`\n❌ Error: ${error}`);
-      if (currentConversationId) {
-        sidebar.updateConversation(currentConversationId, {
-          status: 'failed',
-          summary: error,
-        });
-      }
+      if (currentConversationId) sidebar.updateConversation(currentConversationId, { status: 'failed', summary: error });
     },
   });
 
   webview.onStop(() => currentAgent?.cancel());
 
-  outputChannel?.appendLine('\n═══════════════════════════════════');
-  outputChannel?.appendLine('🚀 Starting TRIM Task');
-  outputChannel?.appendLine(`Task: ${task}`);
-  outputChannel?.appendLine(`Model: ${config.model}`);
-  outputChannel?.appendLine('═══════════════════════════════════');
+  outputChannel?.appendLine(`\n🚀 Starting TRIM Task\nTask: ${task}\nModel: ${config.model}`);
 
   try {
     await currentAgent.run(task);
   } catch (error: any) {
     const errorMessage = error?.message || String(error);
-    if (!errorMessage.includes('Canceled')) {
-      outputChannel?.appendLine(`\n❌ Unhandled error: ${errorMessage}`);
-    }
+    if (!errorMessage.includes('Canceled')) outputChannel?.appendLine(`\n❌ Unhandled error: ${errorMessage}`);
   }
 }
 
@@ -153,39 +115,31 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Register sidebar provider
   sidebarProvider = new SidebarProvider(context.extensionUri, context.globalState);
-  context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider)
-  );
+  context.subscriptions.push(vscode.window.registerWebviewViewProvider(SidebarProvider.viewType, sidebarProvider));
 
-  // Wire sidebar callbacks
-  sidebarProvider.onNewConversation = async () => {
-    const task = await vscode.window.showInputBox({
-      prompt: 'Describe the task for TRIM',
-      placeHolder: 'e.g., "Create a new REST endpoint for user authentication"',
-      ignoreFocusOut: true,
-      validateInput: (value: string) =>
-        value.trim().length === 0 ? 'Task description cannot be empty' : null,
-    });
-    if (task && sidebarProvider) {
-      await startTask(task, sidebarProvider, context);
-    }
+  // Wire: send message from sidebar input → start new task
+  sidebarProvider.onSendMessage = async (text: string) => {
+    if (sidebarProvider) await startTask(text, sidebarProvider, context);
   };
 
+  // Wire: quick task buttons
   sidebarProvider.onQuickTask = async (task: string) => {
-    if (sidebarProvider) {
-      await startTask(task, sidebarProvider, context);
-    }
+    if (sidebarProvider) await startTask(task, sidebarProvider, context);
   };
 
+  // Wire: click history item → open AgentWebview with context
   sidebarProvider.onOpenConversation = (id: string) => {
-    vscode.window.showInformationMessage(`Opening conversation: ${id}`);
-    // Future: restore conversation from history
+    const conv = sidebarProvider?.getConversation(id);
+    webview = new AgentWebview(context.extensionUri);
+    webview.show();
+    webview.setTask(conv?.task || `Resuming conversation`);
   };
 
-  // Register commands
+  // Commands
   context.subscriptions.push(
     vscode.commands.registerCommand('trim.start', async () => {
-      sidebarProvider?.onNewConversation?.();
+      const task = await vscode.window.showInputBox({ prompt: 'Describe the task for TRIM', placeHolder: 'e.g., "Create a new REST endpoint"', ignoreFocusOut: true });
+      if (task && sidebarProvider) await startTask(task, sidebarProvider, context);
     })
   );
 
@@ -195,35 +149,16 @@ export function activate(context: vscode.ExtensionContext) {
         currentAgent.cancel();
         outputChannel?.appendLine('\n⏹️ TRIM stopped by user.');
         webview?.showError('Stopped by user');
-        if (currentConversationId && sidebarProvider) {
-          sidebarProvider.updateConversation(currentConversationId, {
-            status: 'stopped',
-          });
-        }
+        if (currentConversationId && sidebarProvider) sidebarProvider.updateConversation(currentConversationId, { status: 'stopped' });
       } else {
         vscode.window.showInformationMessage('No TRIM task is currently running.');
       }
     })
   );
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand('trim.openSettings', () => {
-      vscode.commands.executeCommand('workbench.action.openSettings', 'trim.apiKey');
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('trim.newConversation', () => {
-      sidebarProvider?.onNewConversation?.();
-    })
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('trim.clearHistory', () => {
-      // Cleared via sidebar UI; this is a command palette fallback
-      vscode.commands.executeCommand('workbench.action.webview.open', 'trim.main');
-    })
-  );
+  context.subscriptions.push(vscode.commands.registerCommand('trim.openSettings', () => {
+    vscode.commands.executeCommand('workbench.action.openSettings', 'trim.apiKey');
+  }));
 }
 
 export function deactivate() {

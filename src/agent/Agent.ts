@@ -180,6 +180,7 @@ export class Agent {
           );
 
           // Execute each tool call
+          const toolResults: ToolResult[] = [];
           for (const toolCall of response.toolCalls) {
             if (this.cancelled) break;
 
@@ -198,7 +199,7 @@ export class Agent {
             if (this.detectLoop(toolName, args)) {
               const loopMsg = `Loop detected: "${toolName}" called with same arguments ${Agent.MAX_REPEATED_CALLS} times in ${Agent.REPEAT_WINDOW_MS / 1000}s. Stopping.`;
               this.callbacks.onError?.(loopMsg);
-              this.context.addToolResult(toolName, {
+              this.context.addToolResult(toolCall.id, {
                 success: false,
                 data: '',
                 error: loopMsg,
@@ -222,16 +223,34 @@ export class Agent {
             try {
               const tool = this.toolRegistry.get(toolName);
               const result = await tool.execute(args);
-              this.context.addToolResult(toolName, result);
+              this.context.addToolResult(toolCall.id, result);
               this.callbacks.onToolResult?.(toolName, result);
+              toolResults.push(result);
             } catch (error: any) {
               const errorResult: ToolResult = {
                 success: false,
                 data: '',
                 error: `Tool execution error: ${error?.message || error}`,
               };
-              this.context.addToolResult(toolName, errorResult);
+              this.context.addToolResult(toolCall.id, errorResult);
               this.callbacks.onToolResult?.(toolName, errorResult);
+              toolResults.push(errorResult);
+            }
+          }
+
+          // If cancelled mid-batch, add dummy results for remaining tool calls
+          // to satisfy the API requirement that every tool_call_id has a response
+          if (this.cancelled && response.toolCalls) {
+            for (const tc of response.toolCalls) {
+              // Only add if not already responded to
+              const lastMsg = this.context.getMessages()[this.context.length - 1];
+              if (lastMsg?.role === 'assistant' || lastMsg?.tool_call_id !== tc.id) {
+                this.context.addToolResult(tc.id, {
+                  success: false,
+                  data: '',
+                  error: 'Cancelled by user',
+                });
+              }
             }
           }
         } else {
@@ -261,13 +280,8 @@ export class Agent {
         this.callbacks.onError?.(errorMessage);
         this.callbacks.onStatus?.(`Error: ${errorMessage}. Retrying...`);
 
-        // Add error message to context so agent can self-correct
-        this.context.addAssistantMessage('');
-        this.context.addToolResult('_error', {
-          success: false,
-          data: '',
-          error: errorMessage,
-        });
+        // Add error context so agent can self-correct on next iteration
+        this.context.addAssistantMessage(`[System error occurred: ${errorMessage}]`);
       }
     }
 

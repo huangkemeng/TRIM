@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { ChatMessage } from '../../api/types';
 
 export type ConversationStatus = 'running' | 'completed' | 'stopped' | 'failed';
 
@@ -11,6 +12,7 @@ export interface ConversationRecord {
   tokensUsed: number;
   summary?: string;
   model?: string;
+  messages?: ChatMessage[];
 }
 
 const STORAGE_KEY = 'trim.conversations';
@@ -61,9 +63,7 @@ export class SidebarStore {
     );
   }
 
-  /** Generate a short title from the task description */
   static generateTitle(task: string): string {
-    // Take first ~50 chars as title
     const cleaned = task.replace(/\s+/g, ' ').trim();
     return cleaned.length > 50 ? cleaned.slice(0, 47) + '...' : cleaned;
   }
