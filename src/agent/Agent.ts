@@ -229,6 +229,11 @@ export class Agent {
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
 
+        // If cancelled, exit silently (no retry, no error reporting)
+        if (this.cancelled) {
+          return;
+        }
+
         // Check if it's a non-retryable error (auth, invalid request)
         if (
           error?.status === 401 ||

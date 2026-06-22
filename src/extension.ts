@@ -30,7 +30,10 @@ function registerAllTools(registry: ToolRegistry): void {
 }
 
 export function activate(context: vscode.ExtensionContext) {
+  // Create output channel and add to subscriptions for proper lifecycle management
   const outputChannel = vscode.window.createOutputChannel('TRIM (Logs)');
+  context.subscriptions.push(outputChannel);
+
   outputChannel.appendLine('TRIM extension activated.');
 
   // Register: Start new task
@@ -147,7 +150,15 @@ export function activate(context: vscode.ExtensionContext) {
     outputChannel.appendLine(`Model: ${config.model}`);
     outputChannel.appendLine('═══════════════════════════════════');
 
-    await currentAgent.run(task);
+    try {
+      await currentAgent.run(task);
+    } catch (error: any) {
+      // Catch any unhandled errors from the agent loop
+      const errorMessage = error?.message || String(error);
+      if (!errorMessage.includes('Canceled')) {
+        outputChannel.appendLine(`\n❌ Unhandled error: ${errorMessage}`);
+      }
+    }
   });
 
   // Register: Stop current task
@@ -167,4 +178,6 @@ export function activate(context: vscode.ExtensionContext) {
 export function deactivate() {
   currentAgent?.cancel();
   webview?.close();
+  currentAgent = undefined;
+  webview = undefined;
 }

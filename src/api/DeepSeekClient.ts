@@ -2,9 +2,22 @@ import OpenAI from 'openai';
 import {
   ChatMessage,
   LLMResponse,
-  ToolDefinition,
   ToolCall,
 } from './types';
+
+// Tool schema format for OpenAI-compatible API
+interface ToolSchema {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: 'object';
+      properties: Record<string, unknown>;
+      required: string[];
+    };
+  };
+}
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
@@ -84,7 +97,7 @@ export class DeepSeekClient {
    */
   async chat(
     messages: ChatMessage[],
-    tools?: ToolDefinition[]
+    tools?: ToolSchema[]
   ): Promise<LLMResponse> {
     let lastError: any;
 
@@ -136,7 +149,7 @@ export class DeepSeekClient {
   async chatStream(
     messages: ChatMessage[],
     options: {
-      tools?: ToolDefinition[];
+      tools?: ToolSchema[];
       onToken?: (token: string) => void;
       onToolCall?: (toolCall: ToolCall) => void;
     }

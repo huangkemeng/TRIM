@@ -23,10 +23,34 @@ export class ToolRegistry {
     return Array.from(this.tools.values()).map(t => t.definition);
   }
 
-  getOpenAIToolSchemas(): Array<{ type: 'function'; function: ToolDefinition }> {
+  /**
+   * Returns tool schemas in OpenAI/DeepSeek function calling format.
+   * Each tool's parameters are wrapped in a proper JSON Schema object
+   * with type: "object", properties, and required fields.
+   */
+  getOpenAIToolSchemas(): Array<{
+    type: 'function';
+    function: {
+      name: string;
+      description: string;
+      parameters: {
+        type: 'object';
+        properties: Record<string, unknown>;
+        required: string[];
+      };
+    };
+  }> {
     return this.getToolSchemas().map(def => ({
       type: 'function' as const,
-      function: def,
+      function: {
+        name: def.name,
+        description: def.description,
+        parameters: {
+          type: 'object' as const,
+          properties: def.parameters as unknown as Record<string, unknown>,
+          required: def.requiredParameters,
+        },
+      },
     }));
   }
 }

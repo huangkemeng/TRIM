@@ -54,7 +54,15 @@ export class AgentWebview {
     // Cleanup on dispose
     this.panel.onDidDispose(() => {
       this.panel = undefined;
+      this.disposeAll();
     }, null, this.disposables);
+  }
+
+  private disposeAll(): void {
+    for (const d of this.disposables) {
+      d.dispose();
+    }
+    this.disposables = [];
   }
 
   onStop(callback: () => void): void {

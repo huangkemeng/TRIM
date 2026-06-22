@@ -21,22 +21,24 @@ export interface ToolCall {
   };
 }
 
-export interface ToolDefinition {
-  type: 'function';
-  function: {
-    name: string;
-    description: string;
-    parameters: Record<string, unknown>;
-  };
-}
-
 export interface ChatCompletionRequest {
   model: string;
   messages: ChatMessage[];
   temperature?: number;
   max_tokens?: number;
   stream?: boolean;
-  tools?: ToolDefinition[];
+  tools?: Array<{
+    type: 'function';
+    function: {
+      name: string;
+      description: string;
+      parameters: {
+        type: 'object';
+        properties: Record<string, unknown>;
+        required: string[];
+      };
+    };
+  }>;
 }
 
 export interface LLMResponse {
