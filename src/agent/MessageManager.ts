@@ -36,7 +36,8 @@ export class MessageManager {
 - If you're stuck or need clarification, use the ask_user tool.
 - **When the task is complete, ALWAYS call task_complete with a summary of what was done.**
 - **If the user asks a simple question (not a coding task), answer concisely and call task_complete immediately after. Do NOT repeat yourself or answer multiple times.**
-- **If you respond with text only and no tool calls, the system will assume you have completed the task.**
+- **If the user just says "hello", "hi", "你好" or similar greetings, respond with ONE brief sentence at most and call task_complete immediately. Do NOT list your capabilities, do NOT ask what they want, and do NOT repeat yourself.**
+- **If you respond with text only and no tool calls, the system will assume you have completed the task. After a text-only response, call task_complete explicitly on the next turn — do NOT generate another text-only response.**
 
 ## Working Directory
 The workspace is at: ${workspaceRoot}

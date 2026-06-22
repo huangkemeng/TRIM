@@ -224,7 +224,6 @@ export class Agent {
           continue;
         }
         consecutiveEmptyResponses = 0;
-        consecutiveTextOnlyResponses = 0; // Reset when we got a valid response
 
         // Check if there are tool calls
         if (response.toolCalls && response.toolCalls.length > 0) {
