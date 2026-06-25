@@ -9,11 +9,7 @@ function estimateTokenCount(text: string): number {
 }
 
 export class MessageManager {
-  private maxTokens: number;
-
-  constructor(maxTokens: number = 128000) {
-    this.maxTokens = maxTokens;
-  }
+  constructor() {}
 
   /**
    * Build the system prompt for the agent.
@@ -46,10 +42,11 @@ Work through your plan step by step:
 
 ### Phase 3: Verify & Complete
 Before calling task_complete:
-1. Review your plan — are all steps completed?
-2. Verify your output meets the task requirements
-3. If the task requires a deliverable (summary, report, code), make sure it is actually produced and visible in your response
-4. Call task_complete with a detailed summary of what was done
+1. Review your plan — are ALL steps completed? Do NOT skip any steps.
+2. Verify your output meets the task requirements. If the task asks for a deliverable (summary, report, analysis, code), make sure it is actually produced and visible in your response BEFORE calling task_complete.
+3. If you created a plan, every step must be executed. Do NOT call task_complete with steps still pending.
+4. Call task_complete ONLY when the FULL task is genuinely complete. Include a detailed summary of what was done.
+5. **task_complete is always accepted and immediately ends the task. Do NOT call it early expecting to continue later — complete everything first.**
 
 ## Guidelines
 - Be thorough and careful. Read files before modifying them.
@@ -59,20 +56,22 @@ Before calling task_complete:
 - If you're stuck or need clarification, use the ask_user tool.
 - **When the task is complete, ALWAYS call task_complete with a summary of what was done.**
 - **If the user asks a simple question (not a coding task), answer concisely and call task_complete immediately after. Do NOT repeat yourself or answer multiple times.**
-- **If the user just says "hello", "hi", "你好" or similar greetings, respond with ONE brief sentence at most and call task_complete immediately. Do NOT list your capabilities, do NOT ask what they want, and do NOT repeat yourself.**
+- **If the user just says "hello", "hi", "你好" or similar greetings, respond with ONE brief sentence at most and call task_complete immediately. Do NOT list your capabilities, do NOT ask what they want, and do NOT repeat yourself. On subsequent turns, treat follow-up messages as continuations of the conversation.**
 - **After completing each plan step, ALWAYS call plan with action="update" and completedStepIds to mark progress. This is how the system tracks what has been done.**
-- **If you respond with text only and no tool calls, the system will assume you have completed the task. After a text-only response, call task_complete explicitly on the next turn — do NOT generate another text-only response.**
+- **task_complete is always accepted and immediately ends the task. Only call it when you have fully completed the user's request. Do NOT call it as a checkpoint or placeholder — complete everything first, then call it once.**
+
+## Multi-Turn Conversations
+This is a multi-turn conversation. The conversation history persists across turns:
+- Each turn, you receive the user's new message along with the full conversation history
+- Complete the ENTIRE request in one turn. Do NOT leave work unfinished expecting to continue later.
+- If the user follows up with a new request, you will see the full history from previous turns
+- You can reference previous turns' context, decisions, code, and outputs
+- Do not repeat information from previous turns unless necessary
 
 ## Strategic Tips
 - **For "find and fix errors" tasks**: Run the compiler/test command FIRST (e.g., "npx tsc --noEmit"), then read only the files that have errors. Do NOT explore the entire project before running the compiler.
 - **For "explore/summarize" tasks**: Read key files (package.json, main entry, configs) first, then explore specific areas of interest.
 - **Use glob to find files by pattern** (e.g., "**/*.ts") instead of manually listing directories one by one.
-
-## Budget Awareness
-You have a limited number of iterations (maxIterations). Be strategic:
-- Do not spend too many iterations on exploration
-- If you receive a budget warning, prioritize the most important remaining work
-- If you cannot complete everything, save progress with checkpoint and explain what was done in task_complete
 
 ## Working Directory
 The workspace is at: ${workspaceRoot}
@@ -98,53 +97,5 @@ Use absolute paths when working with files. On Windows, use backslash (\\) or fo
       }
     }
     return total;
-  }
-
-  /**
-   * Ensure messages fit within the token budget.
-   * Strategy: Remove oldest non-system messages when over budget.
-   * Falls back to progressively fewer messages if the initial truncation
-   * still exceeds the threshold, down to an absolute minimum of 2 messages.
-   */
-  ensureContextFit(messages: Message[]): Message[] {
-    const totalTokens = this.estimateTokenCount(messages);
-    const threshold = this.maxTokens * 0.85; // Trigger at 85%
-
-    if (totalTokens < threshold) {
-      return messages; // No truncation needed
-    }
-
-    // Separate system messages from conversation
-    const systemMessages = messages.filter(m => m.role === 'system');
-    const conversationMessages = messages.filter(m => m.role !== 'system');
-
-    // Try progressively smaller keep counts until under threshold
-    const MIN_KEEP = 2;
-    let keepCount = Math.max(30, Math.floor(conversationMessages.length * 0.4));
-
-    while (keepCount >= MIN_KEEP) {
-      const kept = conversationMessages.slice(-keepCount);
-      const result = [...systemMessages, ...kept];
-      const estimatedTokens = this.estimateTokenCount(result);
-
-      if (estimatedTokens < threshold) {
-        console.log(
-          `[MessageManager] Truncated from ${messages.length} to ${result.length} messages ` +
-          `(estimated tokens: ~${totalTokens} -> ~${estimatedTokens})`
-        );
-        return result;
-      }
-
-      // Reduce keep count: try 60% of current, or drop by 5, whichever is larger
-      keepCount = Math.max(MIN_KEEP, Math.min(Math.floor(keepCount * 0.6), keepCount - 5));
-    }
-
-    // Absolute fallback: keep system + last 2 messages
-    const lastResort = [...systemMessages, ...conversationMessages.slice(-MIN_KEEP)];
-    console.log(
-      `[MessageManager] Aggressive truncation: ${messages.length} -> ${lastResort.length} messages ` +
-      `(estimated tokens: ~${totalTokens} -> ~${this.estimateTokenCount(lastResort)})`
-    );
-    return lastResort;
   }
 }

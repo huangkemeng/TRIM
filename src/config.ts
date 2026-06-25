@@ -2,9 +2,9 @@ import * as vscode from 'vscode';
 import { DeepSeekConfig } from './api/types';
 
 export interface ValidatedConfig extends DeepSeekConfig {
-  maxIterations: number;
   workspaceRoot: string;
   autoApproveCommands: boolean;
+  maxTurns: number;
 }
 
 export function loadConfiguration(): ValidatedConfig {
@@ -14,8 +14,8 @@ export function loadConfiguration(): ValidatedConfig {
   const model = config.get<'deepseek-v4-flash' | 'deepseek-v4-pro'>('model', 'deepseek-v4-flash');
   const temperature = config.get<number>('temperature', 0.1);
   const maxTokens = config.get<number>('maxTokens', 128000);
-  const maxIterations = config.get<number>('maxIterations', 100);
   const autoApproveCommands = config.get<boolean>('autoApproveCommands', false);
+  const maxTurns = config.get<number>('maxTurns', 0);
   const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri?.fsPath || '';
 
   // Validation
@@ -31,12 +31,6 @@ export function loadConfiguration(): ValidatedConfig {
     );
   }
 
-  if (maxIterations < 1 || maxIterations > 500) {
-    vscode.window.showWarningMessage(
-      'TRIM: maxIterations must be between 1 and 500. Using default (100).'
-    );
-  }
-
   if (model !== 'deepseek-v4-flash' && model !== 'deepseek-v4-pro') {
     vscode.window.showWarningMessage(
       `TRIM: Unknown model "${model}". Using "deepseek-v4-flash".`
@@ -48,8 +42,8 @@ export function loadConfiguration(): ValidatedConfig {
     model: model === 'deepseek-v4-flash' || model === 'deepseek-v4-pro' ? model : 'deepseek-v4-flash',
     temperature: Math.max(0, Math.min(2, temperature)),
     maxTokens: Math.max(1000, Math.min(128000, maxTokens)),
-    maxIterations: Math.max(1, Math.min(500, maxIterations)),
     workspaceRoot,
     autoApproveCommands,
+    maxTurns: Math.max(0, maxTurns),
   };
 }

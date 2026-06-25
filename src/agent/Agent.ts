@@ -10,8 +10,8 @@ export interface AgentConfig {
   model: string;
   temperature: number;
   maxTokens: number;
-  maxIterations: number;
   workspaceRoot: string;
+  maxTurns?: number;
 }
 
 export interface AgentCallbacks {
@@ -44,6 +44,8 @@ export class Agent {
   private callbacks: AgentCallbacks;
   private cancelled: boolean = false;
   private abortController: AbortController | null = null;
+  private initialized: boolean = false;
+  private turnCount: number = 0;
 
   // Loop detection
   private recentToolCalls: ToolCallRecord[] = [];
@@ -55,7 +57,8 @@ export class Agent {
   private static readonly MAX_CONSECUTIVE_API_ERRORS = 3;
   private static readonly TOOL_FAILURE_WINDOW = 10;
   private static readonly TOOL_FAILURE_THRESHOLD = 0.7;
-  private static readonly MAX_ALTERNATING_CYCLES = 8; // 8 repeats of a 2-tool pattern = 16 calls
+  private static readonly MAX_ALTERNATING_CYCLES = 4; // 4 repeats of a 2-tool pattern = 8 calls
+  private static readonly NON_PATTERN_TOOLS = new Set(['plan']); // Tools excluded from alternating pattern detection
 
   constructor(
     config: AgentConfig,
@@ -67,8 +70,9 @@ export class Agent {
     this.toolRegistry = toolRegistry;
     this.deepseekClient = deepseekClient;
     this.context = new AgentContext(config.maxTokens);
-    this.messageManager = new MessageManager(config.maxTokens);
+    this.messageManager = new MessageManager();
     this.callbacks = callbacks;
+    this.turnCount = 0;
     // Extract PlanTool reference if registered
     try {
       const planTool = toolRegistry.get('plan');
@@ -115,30 +119,35 @@ export class Agent {
     // Check 2: Alternating pattern detection (e.g., A→B→A→B→A→B)
     // Only check if we have enough recent calls
     if (this.recentToolCalls.length >= 6) {
-      // Get the last N tool names in order
-      const recentNames = this.recentToolCalls.map(r => r.toolName);
+      // Get the last N tool names, excluding non-pattern tools (like 'plan'
+      // which is called frequently as a progress tracker and would cause false positives)
+      const recentNames = this.recentToolCalls
+        .map(r => r.toolName)
+        .filter(name => !Agent.NON_PATTERN_TOOLS.has(name));
 
-      // Look for a 2-tool alternating pattern in the last 6+ calls
-      // e.g., [A, B, A, B, A, B] or [A, A, B, A, A, B]
-      for (let patternLen = 2; patternLen <= 3; patternLen++) {
-        const lastN = recentNames.slice(-patternLen * 3); // Need at least 3 cycles
-        if (lastN.length < patternLen * 3) continue;
+      // Need at least 6 filtered calls to detect a pattern
+      if (recentNames.length >= 6) {
+        // Look for a 2-tool alternating pattern in the last 6+ calls
+        for (let patternLen = 2; patternLen <= 3; patternLen++) {
+          const lastN = recentNames.slice(-patternLen * 3); // Need at least 3 cycles
+          if (lastN.length < patternLen * 3) continue;
 
-        // Check if the pattern repeats
-        const pattern = lastN.slice(0, patternLen);
-        let isAlternating = true;
-        for (let i = 0; i < lastN.length; i++) {
-          if (lastN[i] !== pattern[i % patternLen]) {
-            isAlternating = false;
-            break;
+          // Check if the pattern repeats
+          const pattern = lastN.slice(0, patternLen);
+          let isAlternating = true;
+          for (let i = 0; i < lastN.length; i++) {
+            if (lastN[i] !== pattern[i % patternLen]) {
+              isAlternating = false;
+              break;
+            }
           }
-        }
 
-        if (isAlternating) {
-          // Found a repeating pattern — check how many times it's cycled
-          const cycles = Math.floor(lastN.length / patternLen);
-          if (cycles >= Agent.MAX_ALTERNATING_CYCLES / patternLen) {
-            return true;
+          if (isAlternating) {
+            // Found a repeating pattern — check how many times it's cycled
+            const cycles = Math.floor(lastN.length / patternLen);
+            if (cycles >= Agent.MAX_ALTERNATING_CYCLES / patternLen) {
+              return true;
+            }
           }
         }
       }
@@ -149,73 +158,56 @@ export class Agent {
 
   async run(task: string): Promise<void> {
     this.cancelled = false;
-    this.context.clear();
-    this.recentToolCalls = [];
-    this.toolResults = [];
-    this.consecutiveApiErrors = 0;
+
+    if (!this.initialized) {
+      // === FIRST RUN: initialize everything ===
+      this.context.clear();
+      this.recentToolCalls = [];
+      this.toolResults = [];
+      this.consecutiveApiErrors = 0;
+      this.planTool?.reset();
+      this.initialized = true;
+      this.turnCount = 0;
+
+      // Add system prompt
+      const systemPrompt = this.messageManager.buildSystemPrompt(
+        this.config.workspaceRoot
+      );
+      this.context.addMessage({
+        role: 'system',
+        content: systemPrompt,
+        timestamp: Date.now(),
+      });
+    } else {
+      // === SUBSEQUENT RUN: reset per-turn safety state only ===
+      this.recentToolCalls = [];
+      this.toolResults = [];
+      this.consecutiveApiErrors = 0;
+    }
+
     this.abortController = new AbortController();
-    this.planTool?.reset();
     const abortSignal = this.abortController.signal;
 
-    // Add system prompt
-    const systemPrompt = this.messageManager.buildSystemPrompt(
-      this.config.workspaceRoot
-    );
-    this.context.addMessage({
-      role: 'system',
-      content: systemPrompt,
-      timestamp: Date.now(),
-    });
-
-    // Add user task
+    // Add user message (always)
     this.context.addUserMessage(task);
     this.callbacks.onStatus?.('Starting task...');
 
-    let iterations = 0;
     let consecutiveEmptyResponses = 0;
-    let consecutiveTextOnlyResponses = 0;
     let totalTokensUsed = 0;
-    let budgetWarningGiven = false;
-    let gracefulShutdownRequested = false;
-    let lastPlanUpdateIteration = 0;
-    let planReminderGiven = false;
     const MAX_EMPTY_RESPONSES = 3;
-    const MAX_TEXT_ONLY_RESPONSES = 2;
-    const BUDGET_WARNING_THRESHOLD = 0.7;
-    // Allow one extra iteration for graceful shutdown summary
-    const effectiveMaxIterations = this.config.maxIterations + 1;
 
-    while (iterations < effectiveMaxIterations && !this.cancelled) {
-      iterations++;
-      this.callbacks.onStatus?.(
-        `Iteration ${iterations}/${this.config.maxIterations}`
-      );
-
-      // --- Budget monitoring: warn at 70% ---
-      const remaining = this.config.maxIterations - iterations;
-      if (!budgetWarningGiven && remaining <= Math.ceil(this.config.maxIterations * (1 - BUDGET_WARNING_THRESHOLD))) {
-        budgetWarningGiven = true;
-        this.context.addMessage({
-          role: 'system',
-          content: `[Budget Warning: approximately ${remaining} iterations remaining. Prioritize completing the most important work. If you cannot finish everything, save progress and call task_complete with a summary of what was accomplished.]`,
-          timestamp: Date.now(),
-        });
+    // No iteration limit — loop until task_complete or a safety guard triggers
+    while (!this.cancelled) {
+      this.turnCount++;
+      if (this.config.maxTurns && this.turnCount > this.config.maxTurns) {
+        const msg = `Max turns (${this.config.maxTurns}) exceeded. Stopping.`;
+        this.callbacks.onError?.(msg);
+        this.callbacks.onComplete?.(msg);
+        return;
       }
-
-      // --- Graceful shutdown: when only 1 iteration left (the extra one) ---
-      if (remaining <= 0 && !gracefulShutdownRequested) {
-        gracefulShutdownRequested = true;
-        this.context.addMessage({
-          role: 'system',
-          content: `[You have reached the maximum iteration limit (${this.config.maxIterations}). Please summarize what you have accomplished so far and call task_complete with a progress summary. Do NOT start new work.]`,
-          timestamp: Date.now(),
-        });
-      }
-
       try {
-        // Build messages and ensure context fits
-        let messages = this.context.getMessages();
-        messages = this.messageManager.ensureContextFit(messages);
+        // Build messages — no context trimming; full history preserved
+        const messages = this.context.getMessages();
         const chatMessages = messages.map(m => ({
           role: m.role,
           content: m.content,
@@ -267,7 +259,6 @@ export class Agent {
 
         // Check if there are tool calls
         if (response.toolCalls && response.toolCalls.length > 0) {
-          consecutiveTextOnlyResponses = 0; // Reset counter when tools are used
           // Add assistant message with tool calls to context
           this.context.addAssistantMessage(
             response.content,
@@ -279,7 +270,6 @@ export class Agent {
           );
 
           // Execute each tool call
-          const toolResults: ToolResult[] = [];
           for (const toolCall of response.toolCalls) {
             if (this.cancelled) break;
 
@@ -311,28 +301,31 @@ export class Agent {
             if (toolName === 'task_complete') {
               const summary = (args.summary as string) || 'Task completed';
 
-              // --- Plan completion verification ---
-              if (this.planTool) {
-                const planStatus = this.planTool.getStatus();
-                if (planStatus.incomplete.length > 0) {
-                  // Plan has incomplete steps — warn and let AI decide
-                  this.callbacks.onStatus?.(
-                    `Plan check: ${planStatus.completed.length}/${planStatus.total} steps completed. ${planStatus.incomplete.length} steps remaining.`
-                  );
-
-                  // If graceful shutdown was requested, allow completion anyway
-                  if (!gracefulShutdownRequested) {
-                    const warning = `[Plan Check: The following plan steps are not yet completed: ${planStatus.incomplete.join(', ')}. ` +
-                      `If you are confident the task is done, call task_complete again. Otherwise, continue working by completing the remaining steps or updating the plan.]`;
-                    this.context.addMessage({
-                      role: 'system',
-                      content: warning,
-                      timestamp: Date.now(),
-                    });
-                    continue; // Give AI a chance to continue
-                  }
-                }
+              // Check if there are incomplete plan steps
+              const planStatus = this.planTool?.getStatus();
+              if (planStatus && planStatus.incomplete.length > 0) {
+                const errorMsg =
+                  `Cannot complete task: the plan still has incomplete steps (${planStatus.incomplete.length}/${planStatus.total}): ${planStatus.incomplete.join(', ')}. ` +
+                  `Please complete all steps first or update the plan.`;
+                this.context.addToolResult(toolCall.id, {
+                  success: false,
+                  data: '',
+                  error: errorMsg,
+                });
+                this.callbacks.onToolResult?.(toolName, {
+                  success: false,
+                  data: '',
+                  error: errorMsg,
+                });
+                // Don't return — let the AI continue working on remaining steps
+                continue;
               }
+
+              // Add tool result to context so the AI sees completion confirmed
+              this.context.addToolResult(toolCall.id, {
+                success: true,
+                data: `Task completed: ${summary}`,
+              });
 
               this.callbacks.onToolResult?.(toolName, {
                 success: true,
@@ -348,17 +341,7 @@ export class Agent {
               const result = await tool.execute(args);
               this.context.addToolResult(toolCall.id, result);
               this.callbacks.onToolResult?.(toolName, result);
-              toolResults.push(result);
               this.toolResults.push({ success: result.success, timestamp: Date.now() });
-
-              // Track plan updates
-              if (toolName === 'plan') {
-                const planAction = args.action as string;
-                if (planAction === 'update' || planAction === 'complete') {
-                  lastPlanUpdateIteration = iterations;
-                  planReminderGiven = false;
-                }
-              }
             } catch (error: any) {
               const errorResult: ToolResult = {
                 success: false,
@@ -367,7 +350,6 @@ export class Agent {
               };
               this.context.addToolResult(toolCall.id, errorResult);
               this.callbacks.onToolResult?.(toolName, errorResult);
-              toolResults.push(errorResult);
               this.toolResults.push({ success: false, timestamp: Date.now() });
             }
           }
@@ -402,31 +384,10 @@ export class Agent {
             }
           }
 
-          // --- Plan update reminder: if plan exists but hasn't been updated in 5+ iterations ---
-          if (this.planTool && !planReminderGiven && lastPlanUpdateIteration > 0) {
-            const planStatus = this.planTool.getStatus();
-            if (planStatus.total > 0 && iterations - lastPlanUpdateIteration >= 5) {
-              planReminderGiven = true;
-              this.context.addMessage({
-                role: 'system',
-                content: `[Reminder: You have not updated your plan in ${iterations - lastPlanUpdateIteration} iterations. Current progress: ${planStatus.completed.length}/${planStatus.total} steps completed. Please call plan with action="update" and completedStepIds to mark your progress.]`,
-                timestamp: Date.now(),
-              });
-            }
-          }
         } else {
           // No tool calls - just text response
           this.context.addAssistantMessage(response.content);
           this.callbacks.onStatus?.('Agent is thinking...');
-
-          // Auto-complete: if AI gives text-only responses without calling
-          // task_complete, it likely answered a simple question. Treat as done
-          // after N consecutive text-only iterations.
-          consecutiveTextOnlyResponses++;
-          if (consecutiveTextOnlyResponses >= MAX_TEXT_ONLY_RESPONSES) {
-            this.callbacks.onComplete?.(response.content);
-            return;
-          }
         }
       } catch (error: any) {
         const errorMessage = error?.message || String(error);
@@ -463,22 +424,7 @@ export class Agent {
       }
     }
 
-    // Reached max iterations or cancelled
-    if (this.cancelled) {
-      this.callbacks.onStatus?.('Task cancelled by user.');
-    } else {
-      this.callbacks.onStatus?.(
-        `Reached max iterations (${this.config.maxIterations}).`
-      );
-      // Try to get a final summary from the plan tool
-      let summary = `Task stopped after ${this.config.maxIterations} iterations.`;
-      if (this.planTool) {
-        const status = this.planTool.getStatus();
-        summary += ` Plan progress: ${status.completed.length}/${status.total} steps completed.`;
-        const goal = this.planTool.getGoal();
-        if (goal) summary += ` Goal: ${goal}`;
-      }
-      this.callbacks.onComplete?.(summary);
-    }
+    // Only reached if cancelled
+    this.callbacks.onStatus?.('Task cancelled by user.');
   }
 }

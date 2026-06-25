@@ -51,6 +51,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   public onSendMessage?: (text: string) => void;
   public onQuickTask?: (task: string) => void;
   public onOpenConversation?: (id: string) => void;
+  public onGoBack?: () => void;
 
   constructor(
     private extensionUri: vscode.Uri,
@@ -192,6 +193,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         this.pushState();
         break;
       case 'goBack':
+        this.onGoBack?.();
         this.currentView = 'default';
         this.chatMessages = [];
         this.currentChatId = undefined;
